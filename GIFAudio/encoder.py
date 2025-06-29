@@ -33,8 +33,14 @@ def append_audio_to_gif(gif_path, audio_path, output_path):
   with open(gif_path, 'rb') as gif_file:
       gif_data = gif_file.read()
 
-  with open(audio_path, 'rb') as audio_file:
-      audio_data = audio_file.read()
+  audio = AudioSegment.from_file(audio_path)
+  audio = audio.set_channels(1).set_sample_width(2).set_frame_rate(44100)
+  raw_audio_data = audio.raw_data
+
+  # with open(audio_path, 'rb') as audio_file:
+  #     audio_data = audio_file.read()
+
+  compressed_audio = zlib.compress(raw_audio_data)
 
   loop_count = get_gif_loop_count(gif_data)
   if loop_count is None:
@@ -48,7 +54,7 @@ def append_audio_to_gif(gif_path, audio_path, output_path):
       output_file.write(gif_data)
       output_file.write(delimiter)
       output_file.write(loop_count_bytes)
-      output_file.write(audio_data)
+      output_file.write(compressed_audio)
 
   print(f"Combined file written to: {output_path}")
 
