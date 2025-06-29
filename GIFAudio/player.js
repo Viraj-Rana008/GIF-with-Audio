@@ -14,7 +14,55 @@ function findDelimiterPosition(buffer, delimiter) {
     return -1;
 }
 
-// Main loader: now reads loop count from 2 bytes after delimiter
+// Build a minimal WAV header
+function createWavBuffer(pcmBytes, sampleRate = 44100, numChannels = 1, bitDepth = 16) {
+    const byteRate = sampleRate * numChannels * bitDepth / 8;
+    const blockAlign = numChannels * bitDepth / 8;
+    const wavHeaderSize = 44;
+    const dataSize = pcmBytes.byteLength;
+    const totalSize = wavHeaderSize + dataSize;
+
+    const buffer = new ArrayBuffer(totalSize);
+    const view = new DataView(buffer);
+
+    let offset = 0;
+
+    function writeString(str) {
+        for (let i = 0; i < str.length; i++) {
+            view.setUint8(offset++, str.charCodeAt(i));
+        }
+    }
+
+    function writeUint32(val) {
+        view.setUint32(offset, val, true);
+        offset += 4;
+    }
+
+    function writeUint16(val) {
+        view.setUint16(offset, val, true);
+        offset += 2;
+    }
+
+    writeString('RIFF');
+    writeUint32(totalSize - 8); // ChunkSize
+    writeString('WAVE');
+    writeString('fmt ');
+    writeUint32(16); // Subchunk1Size
+    writeUint16(1);  // AudioFormat = PCM
+    writeUint16(numChannels);
+    writeUint32(sampleRate);
+    writeUint32(byteRate);
+    writeUint16(blockAlign);
+    writeUint16(bitDepth);
+    writeString('data');
+    writeUint32(dataSize);
+
+    // Copy PCM bytes
+    new Uint8Array(buffer, wavHeaderSize).set(new Uint8Array(pcmBytes));
+
+    return buffer;
+}
+
 async function loadAndPlayFromFile(file) {
     const arrayBuffer = await file.arrayBuffer();
     const delimiter = new TextEncoder().encode('AUD');
@@ -27,23 +75,33 @@ async function loadAndPlayFromFile(file) {
 
     const fullBytes = new Uint8Array(arrayBuffer);
 
-    // Read loop count: 2 bytes after the delimiter
+    // Read loop count (2 bytes after delimiter)
     const loopCountOffset = delimiterPos + delimiter.length;
     const loopCount = fullBytes[loopCountOffset] + (fullBytes[loopCountOffset + 1] << 8);
 
-    // Slice the parts
+    // Slice parts
     const gifBuffer = arrayBuffer.slice(0, delimiterPos);
-    const audioBuffer = arrayBuffer.slice(loopCountOffset + 2); // after loop count
+    const compressedPcm = arrayBuffer.slice(loopCountOffset + 2); // after loop count
 
+    // Decompress raw PCM
+    let rawPcm;
+    try {
+        rawPcm = pako.inflate(compressedPcm).buffer;
+    } catch (e) {
+        alert("Failed to decompress audio data.");
+        return;
+    }
+
+    // Convert to WAV
+    const wavBuffer = createWavBuffer(rawPcm);
+
+    // Play GIF and audio
     const gifBlob = new Blob([gifBuffer], { type: 'image/gif' });
-    const audioBlob = new Blob([audioBuffer], { type: 'audio/mpeg' });
+    const wavBlob = new Blob([wavBuffer], { type: 'audio/wav' });
 
-    // Set image source
     document.getElementById("gifPlayer").src = URL.createObjectURL(gifBlob);
-
-    // Set audio player
     const audioPlayer = document.getElementById("audioPlayer");
-    audioPlayer.src = URL.createObjectURL(audioBlob);
+    audioPlayer.src = URL.createObjectURL(wavBlob);
 
     let playCount = 0;
     const maxLoops = loopCount === 0 ? Infinity : loopCount + 1;
@@ -59,7 +117,7 @@ async function loadAndPlayFromFile(file) {
     audioPlayer.play();
 }
 
-// Setup file input
+// File input listener
 document.getElementById("fileInput").addEventListener("change", function (event) {
     const file = event.target.files[0];
     if (file) {
